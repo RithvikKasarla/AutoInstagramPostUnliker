@@ -8,176 +8,169 @@ from selenium.common.exceptions import TimeoutException, WebDriverException
 import time
 
 
-def end_timer(start_time):
-    end_time = time.time()
-    elapsed = end_time - start_time
-    mins, secs = divmod(int(elapsed), 60)
-    millis = int((elapsed - int(elapsed)) * 1000)
-
-    print(f"⏱️ Elapsed Time: {mins:02d}:{secs:02d}.{millis:03d}")
-    print("🚪 Exiting...")
+class InstagramUnliker:
+    # Configuration constants
+    LOGIN_URL = "https://www.instagram.com/accounts/login/"
+    HOME_URL = "https://www.instagram.com/"
+    TIMEOUT = 15
+    SCROLL_ATTEMPTS = 5
     
-# --------------------
-# Driver Setup
-# --------------------
-options = Options()
-options.binary_location = "/usr/sbin/chromium"
-options.add_argument("--start-maximized")
+    # XPATH constants
+    MORE_BUTTON_XPATH = '//span[text()="More"]'
+    ACTIVITY_BUTTON_XPATH = '//span[text()="Your activity"]'
+    SELECT_BUTTON_XPATH = '//span[text()="Select"]'
+    POST_BUTTON_XPATH = '//div[@role="button" and @aria-label="Image of Post"]'
+    UNLIKE_BUTTON_XPATH = '//span[text()="Unlike"] | //span[text()="Remove from likes"]'
+    CONFIRM_UNLIKE_XPATH = '//button[.//div[text()="Unlike"]]'
 
-service = Service("/sbin/chromedriver")
-driver = webdriver.Chrome(service=service, options=options)
+    def __init__(self, chrome_binary, driver_path):
+        self.chrome_binary = chrome_binary
+        self.driver_path = driver_path
+        self.driver = None
+        self.start_time = None
 
-# --------------------
-# Step 1: Log in Manually
-# --------------------
-driver.get("https://www.instagram.com/accounts/login/")
-print("⏳ Please log in manually within the next 20 seconds...")
-time.sleep(30)
+    def __enter__(self):
+        self._initialize_driver()
+        return self
 
-# --------------------
-# Step 2: Go to Likes Activity Page
-# -------------------- 
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.driver:
+            self.driver.quit()
+            print("🚪 Driver closed successfully")
+        if self.start_time:
+            self._print_elapsed_time()
 
-try:
-    more_button = WebDriverWait(driver, 15).until(
-        EC.element_to_be_clickable((By.XPATH, '//span[text()="More"]'))
-    )
-    more_button.click()
-    print("✅ Clicked 'More'")
+    def _initialize_driver(self):
+        options = Options()
+        options.binary_location = self.chrome_binary
+        options.add_argument("--start-maximized")
+        
+        service = Service(self.driver_path)
+        self.driver = webdriver.Chrome(service=service, options=options)
+        print("🚀 Chrome driver initialized")
 
-    time.sleep(1)
+    def _print_elapsed_time(self):
+        elapsed = time.time() - self.start_time
+        mins, secs = divmod(int(elapsed), 60)
+        millis = int((elapsed - int(elapsed)) * 1000)
+        print(f"⏱️ Total elapsed time: {mins:02d}:{secs:02d}.{millis:03d}")
 
-    # Click the "Your Activity" button
-    activity_button = WebDriverWait(driver, 15).until(
-        EC.element_to_be_clickable((By.XPATH, '//span[text()="Your activity"]'))
-    )
-    activity_button.click()
-    print("✅ Clicked 'Your Activity'")
+    def manual_login(self):
+        self.driver.get(self.LOGIN_URL)
+        print("⏳ Please complete manual login within 30 seconds...")
+        time.sleep(30)
+        print("✅ Assuming login successful")
 
-except Exception as e:
-    print("❌ Failed to click 'More' or 'Your Activity':", e)
-    driver.quit()
-    exit()
+    def navigate_to_activity(self):
+        self._safe_get(self.HOME_URL)
+        self._click_element(self.MORE_BUTTON_XPATH, "More button")
+        self._click_element(self.ACTIVITY_BUTTON_XPATH, "Activity button")
+        print("✅ Successfully navigated to activity page")
 
-time.sleep(1)
-
-start_time = time.time()
-
-while True: # Loop to unlike all posts
-    # --------------------
-    # ☑️ Step 3: Click the 'Select' Button
-    # --------------------
-    tries = 0
-    while True:
-        try:
-            select_button = WebDriverWait(driver, 5).until(
-                EC.element_to_be_clickable((By.XPATH, '//span[text()="Select"]'))
-            )
-            select_button.click()
-            print("✅ Clicked 'Select' button.")
-            break
-        except TimeoutException:
-            print("🔄 'Select' not found yet, retrying...")
-            time.sleep(3)
-        except WebDriverException as e:
-            print("❌ WebDriver crashed or lost connection:", e)
-            driver.quit()
-            exit()
-        except Exception as e:
-            print("❌ Unexpected error:", e)
-            driver.quit()
-            exit()
-        tries += 1
-        if tries > 4:
-            driver.get("https://www.instagram.com")
-            time.sleep(1)
+    def run_unlike_cycle(self):
+        self.start_time = time.time()
+        while True:
             try:
-                # Click the "More" button
-                more_button = WebDriverWait(driver, 15).until(
-                    EC.element_to_be_clickable((By.XPATH, '//span[text()="More"]'))
-                )
-                more_button.click()
-                print("✅ Clicked 'More'")
-
-                time.sleep(1)
-
-                # Click the "Your Activity" button
-                activity_button = WebDriverWait(driver, 15).until(
-                    EC.element_to_be_clickable((By.XPATH, '//span[text()="Your activity"]'))
-                )
-                activity_button.click()
-                print("✅ Clicked 'Your Activity'")
-                tries = 0
+                if not self._handle_select_button():
+                    continue
+                
+                self._scroll_page()
+                selected = self._select_posts()
+                
+                if selected:
+                    self._process_unlike()
+                else:
+                    print("ℹ️ No posts found to unlike")
+                
+                time.sleep(20)
+                
+            except KeyboardInterrupt:
+                print("\n🛑 User interrupted process")
+                return
             except Exception as e:
-                print("❌ Failed to click 'More' or 'Your Activity':", e)
-                driver.quit()
-                exit()
-                        
-    # --------------------
-    # 🔄 Step 4: Scroll to Load More Posts
-    # --------------------
-    scrolls = 3 # Increase for more posts 
-    for i in range(scrolls):
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        print(f"🔃 Scrolled ({i+1}/{scrolls})")
-        time.sleep(0.2)
+                print(f"⚠️ Unexpected error: {str(e)}")
+                self.navigate_to_activity()
 
-    # --------------------
-    # 🖱️ Step 5: Select All Visible Liked Posts
-    # --------------------
-    try:
-        post_buttons = driver.find_elements(By.XPATH, '//div[@role="button" and @aria-label="Image of Post"]')
-        print(f"📌 Found {len(post_buttons)} posts to select...")
-
-        for i, button in enumerate(post_buttons):
+    def _handle_select_button(self, max_retries=5):
+        for attempt in range(max_retries):
             try:
-                driver.execute_script("arguments[0].scrollIntoView({behavior: 'instant', block: 'center'})", button)
-                time.sleep(0.2)
-                button.click()
-                print(f"✅ Selected post {i+1}")
-            except Exception as e:
-                end_timer(start_time)
-                print(f"❌ Failed to select post {i+1}: {e}")
-    except Exception as e:
-        end_timer(start_time)
-        print("⚠️ Error finding post buttons:", e)
-        exit()
+                self._click_element(self.SELECT_BUTTON_XPATH, "Select button", timeout=5)
+                return True
+            except TimeoutException:
+                print(f"🔄 Select button not found (attempt {attempt+1}/{max_retries})")
+        
+        print("🔁 Resetting to activity page...")
+        self.navigate_to_activity()
+        return False
 
-    # --------------------
-    # ❌ Step 6: Click 'Unlike' or 'Remove from Likes'
-    # --------------------
-    try:
-        unlike_button = WebDriverWait(driver, 10).until(
-            EC.element_to_be_clickable((By.XPATH, '//span[text()="Unlike"] | //span[text()="Remove from likes"]'))
+    def _scroll_page(self):
+        for i in range(self.SCROLL_ATTEMPTS):
+            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            print(f"🔃 Scrolled page ({i+1}/{self.SCROLL_ATTEMPTS})")
+            time.sleep(0.2)
+
+    def _select_posts(self):
+        posts = self.driver.find_elements(By.XPATH, self.POST_BUTTON_XPATH)
+        print(f"📌 Found {len(posts)} posts to select")
+        
+        for idx, post in enumerate(posts, 1):
+            try:
+                self.driver.execute_script(
+                    "arguments[0].scrollIntoView({behavior: 'instant', block: 'center'});",
+                    post
+                )
+                post.click()
+                print(f"✅ Selected post {idx}/{len(posts)}")
+                time.sleep(0.1)
+            except Exception as e:
+                print(f"⚠️ Failed to select post {idx}: {str(e)}")
+        
+        return len(posts) > 0
+
+    def _process_unlike(self):
+        self._click_element(self.UNLIKE_BUTTON_XPATH, "Unlike button")
+        self._confirm_unlike()
+        print("✅ Successfully processed unlike action")
+
+    def _confirm_unlike(self, max_retries=5):
+        for attempt in range(max_retries):
+            try:
+                self._click_element(self.CONFIRM_UNLIKE_XPATH, "Confirm unlike", timeout=3)
+                return
+            except TimeoutException:
+                print(f"🔄 Confirm dialog not found (attempt {attempt+1}/{max_retries})")
+                time.sleep(0.5)
+        print("⚠️ Failed to confirm unlike after multiple attempts")
+
+    def _click_element(self, xpath, element_name, timeout=TIMEOUT):
+        element = WebDriverWait(self.driver, timeout).until(
+            EC.element_to_be_clickable((By.XPATH, xpath))
         )
-        unlike_button.click()
-        print("🗑️ Clicked 'Unlike' or 'Remove from likes' button.")
-    except Exception as e:
-        end_timer(start_time)
-        print("⚠️ Could not find Unlike button (may need XPath tweak):", e)
+        element.click()
+        print(f"✅ Clicked {element_name}")
 
-    time.sleep(0.4)
-    # --------------------
-    # 👇 Step 7: Confirm 'Unlike' in the Modal
-    # --------------------
-    tries = 0
-    while True:
+    def _safe_get(self, url):
         try:
-            confirm_unlike = WebDriverWait(driver, 10).until(
-                EC.element_to_be_clickable((By.XPATH, '//button[.//div[text()="Unlike"]]'))
-            )
-            confirm_unlike.click()
-            print("✅ Confirmed 'Unlike' in modal.")
-            break
-        except Exception as e:
-            # end_timer(start_time)
-            print("⚠️ Could not confirm 'Unlike':", e)
-        tries += 1
-        if tries > 4:
-            break # Exit loop if tries exceed 4
+            self.driver.get(url)
+        except WebDriverException as e:
+            print(f"⚠️ Failed to navigate to {url}: {str(e)}")
+            raise
 
-    # --------------------
-    # ✅ Done
-    # --------------------
-    print("🎉 Finished unliking posts.")
-    time.sleep(20)
+
+def main():
+    CHROME_BINARY = "/usr/sbin/chromium"
+    CHROMEDRIVER_PATH = "/sbin/chromedriver"
+
+    try:
+        with InstagramUnliker(CHROME_BINARY, CHROMEDRIVER_PATH) as unliker:
+            unliker.manual_login()
+            unliker.navigate_to_activity()
+            unliker.run_unlike_cycle()
+    except Exception as e:
+        print(f"❌ Critical error occurred: {str(e)}")
+    finally:
+        print("🏁 Program execution completed")
+
+
+if __name__ == "__main__":
+    main()
